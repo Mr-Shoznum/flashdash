@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlashDash — Quiz</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="header">
+  <a href="index.html" class="logo">Flash<span class="accent">Dash</span></a>
+  <div class="nav-actions">
+    <a class="btn btn-secondary" href="index.html">← Back to Collections</a>
+  </div>
+</header>
+
+<main class="container">
+  <div id="quizRoot"></div>
+</main>
+
+<script>
+/* ============================================
+   FlashDash — Quiz
+   ============================================ */
+const STORAGE_KEY = 'flashdash-data';
+
+function getData() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{"collections":[]}');
+  } catch {
+    return { collections: [] };
+  }
+}
+
+function saveData(d) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, m => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[m]));
+}
+
+function shuffleArr(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/* ---------- State ---------- */
+const params = new URLSearchParams(location.search);
+const collectionId = params.get('id');
+let appData = getData();
+let collection = appData.collections.find(c => c.id === collectionId);
+
+let questions = [];
+let qIndex = 0;
+let score = 0;
+let answered = false;
+
+/* ---------- Build questions ---------- */
+function buildQuestions() {
+  const allBacks = collection.flashcards.map(c => c.back);
+  questions = shuffleArr(collection.flashcards).map(card => {
+    const pool = allBacks.filter(b => b !== card.back);
+    const distractors = shuffleArr(pool).slice(0, Math.min(3, pool.length));
+    const options = shuffleArr([card.back, ...distractors]);
+    return {
+      front: card.front,
+      back: card.back,
+      category: card.category,
+      options
+    };
+  });
+}
+
+/* ---------- Init ---------- */
+function init() {
+  const root = document.getElementById('quizRoot');
+
+  // Re-fetch collection (in case it changed)
+  appData = getData();
+  collection = appData.collections.find(c => c.id === collectionId);
+
+  if (!collection) {
+    root.innerHTML = `
+      <div class="empty-state">
+        <h3>Collection not found</h3>
+        <p>It may have been deleted.</p>
+        <a class="btn btn-primary" href="index.html">Back to home</a>
+      </div>`;
+    return;
+  }
+
+  if (collection.flashcards.length < 2) {
+    root.innerHTML = `
+      <h1 class="page-title">${escapeHtml(collection.title)}</h1>
+      <p class="section-subtitle">${escapeHtml(collection.description || '')}</p>
+      <div class="empty-state">
+        <h3>Need at least 2 cards for a quiz</h3>
+        <p>Add more cards to this collection before taking a quiz.</p>
+        <a class="btn btn-primary" href="index.html">Back to home</a>
+      </div>`;
+    return;
+  }
+
+  buildQuestions();
+  qIndex = 0;
+  score = 0;
+  answered = false;
+  renderQuestion();
+}
+
+function renderQuestion() {
+  const q = questions[qIndex];
+  const root = document.getElementById('quizRoot');
+  const progress = (qIndex / questions.length) * 100;
+
+  root.innerHTML = `
+    <div class="quiz-container">
+      <h1 class="page-title" style="font-size:24px;margin-bottom:18px;">${escapeHtml(collection.title)}</h1>
+
+      <div class="quiz-progress">
+        <div class="progress-text">Question ${qIndex + 1} / ${questions.length}</div>
+        <div class="quiz-score">Score: <strong>${score}</strong></div>
+      </div>
+
+      <div class="progress-bar">
+        <div class="progress-fill" style="width:${progress}%"></div>
+      </div>
+
+      <div class="quiz-question">
+        ${q.category ? `<div class="flashcard-category">${escapeHtml(q.category)}</div>` : ''}
+        <div class="quiz-question-text">${escapeHtml(q.front)}</div>
+      </div>
+
+      <div class="quiz-options" id="quizOptions">
+        ${q.options.map((opt, i) => `
+          <button class="quiz-option" data-value="${escapeHtml(opt)}" onclick="answer(this)">
+            <div class="quiz-option-letter">${String.fromCharCode(65 + i)}</div>
+            <div class="quiz-option-text">${escapeHtml(opt)}</div>
+          </button>
+        `).join('')}
+      </div>
+
+      <div id="quizNext" class="quiz-next-wrap" style="display:none;">
+        <button class="btn btn-primary btn-lg" onclick="next()">
+          ${qIndex === questions.length - 1 ? 'See Results →' : 'Next Question →'}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function answer(btn) {
+  if (answered) return;
+  answered = true;
+  const q = questions[qIndex];
+  const chosen = btn.dataset.value;
+
+  document.querySelectorAll('.quiz-option').forEach(b => {
+    b.disabled = true;
+    if (b.dataset.value === q.back) b.classList.add('correct');
+    else if (b === btn) b.classList.add('incorrect');
+  });
+
+  if (chosen === q.back) {
+    score++;
+    // Update visible score immediately
+    const scoreEl = document.querySelector('.quiz-score strong');
+    if (scoreEl) scoreEl.textContent = score;
+  }
+
+  document.getElementById('quizNext').style.display = 'block';
+}
+
+function next() {
+  if (qIndex < questions.length - 1) {
+    qIndex++;
+    answered = false;
+    renderQuestion();
+  } else {
+    showResults();
+  }
+}
+
+function showResults() {
+  const pct = Math.round((score / questions.length) * 100);
+
+  // Save to history
+  appData = getData();
+  const target = appData.collections.find(c => c.id === collectionId);
+  if (target) {
+    if (!Array.isArray(target.history)) target.history = [];
+    const today = new Date().toISOString().slice(0, 10);
+    target.history.push({
+      date: today,
+      score: pct,
+      mode: 'quiz',
+      totalCards: questions.length
+    });
+    saveData(appData);
+  }
+
+  let message = '';
+  if (pct === 100) message = 'Perfect score! 🔥';
+  else if (pct >= 90) message = 'Outstanding work!';
+  else if (pct >= 75) message = 'Great job — almost there.';
+  else if (pct >= 50) message = 'Solid attempt. Keep practising.';
+  else message = 'Time to revise these cards.';
+
+  const root = document.getElementById('quizRoot');
+  root.innerHTML = `
+    <div class="results">
+      <p class="section-subtitle" style="margin-bottom:0;text-transform:uppercase;letter-spacing:.15em;font-family:var(--font-mono);font-size:12px;">Quiz Complete</p>
+      <div class="results-score">${pct}%</div>
+      <div class="results-label">${score} of ${questions.length} correct</div>
+      <p class="results-message">${message}</p>
+      <div class="results-actions">
+        <button class="btn btn-primary btn-lg" onclick="init()">Try Again</button>
+        <a class="btn btn-secondary btn-lg" href="revise.html?id=${encodeURIComponent(collectionId)}">Revise Cards</a>
+        <a class="btn btn-secondary btn-lg" href="index.html">Home</a>
+      </div>
+    </div>
+  `;
+}
+
+/* ---------- Keyboard: 1-4 picks an option, Enter advances ---------- */
+document.addEventListener('keydown', (e) => {
+  if (!questions.length) return;
+  if (!answered) {
+    const idx = ['1', '2', '3', '4'].indexOf(e.key);
+    if (idx >= 0) {
+      const btns = document.querySelectorAll('.quiz-option');
+      if (btns[idx]) btns[idx].click();
+    }
+  } else if (e.key === 'Enter' || e.key === ' ') {
+    const nextBtn = document.querySelector('#quizNext .btn');
+    if (nextBtn) { e.preventDefault(); nextBtn.click(); }
+  }
+});
+
+init();
+</script>
+</body>
+</html>

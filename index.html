@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlashDash — Your Collections</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="header">
+  <a href="index.html" class="logo">Flash<span class="accent">Dash</span></a>
+  <div class="nav-actions">
+    <!-- Hidden file input for header import button -->
+    <input type="file" id="importFileHeader" accept=".json,application/json" hidden>
+    <button class="btn btn-secondary" onclick="document.getElementById('importFileHeader').click()" title="Import a collection from JSON">↓ Import</button>
+    <button class="btn btn-secondary" onclick="backupAllData(false)" title="Download all your collections as one backup file">💾 Backup</button>
+    <button class="btn btn-primary" onclick="openCollectionModal()">+ New Collection</button>
+  </div>
+</header>
+
+<main class="container">
+
+  <!-- ============== Global Search ============== -->
+  <section class="search-section">
+    <div class="search-bar">
+      <span class="search-icon">⌕</span>
+      <input
+        type="text"
+        id="searchInput"
+        class="search-input"
+        placeholder="Search all flashcards across collections..."
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <button id="searchClear" class="search-clear" style="display:none;" onclick="clearSearch()" title="Clear search">×</button>
+    </div>
+    <div id="searchResults" class="search-results" style="display:none;"></div>
+  </section>
+
+  <!-- ============== Collections ============== -->
+  <section class="collections-section" id="collectionsSection">
+    <h1 class="page-title">Your Collections</h1>
+    <p class="section-subtitle">Pick a deck to revise, or test yourself with a quiz.</p>
+
+    <div id="collectionsGrid" class="collections-grid"></div>
+    <div id="emptyState" class="empty-state" style="display:none;">
+      <h3>No collections yet</h3>
+      <p>Create your first collection or import one to start studying.</p>
+      <button class="btn btn-primary btn-lg" onclick="openCollectionModal()">Create Collection</button>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============== Collection Modal (New / Edit + Import) ============== -->
+<div id="collectionModal" class="modal-overlay" onclick="if(event.target===this)closeCollectionModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 class="modal-title" id="collectionModalTitle">New Collection</h2>
+      <button class="modal-close" onclick="closeCollectionModal()">×</button>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Title</label>
+      <input type="text" id="collectionTitle" class="form-input" placeholder="e.g. Spanish Vocabulary" maxlength="80">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Description</label>
+      <textarea id="collectionDescription" class="form-textarea" placeholder="A short description..." maxlength="240"></textarea>
+    </div>
+
+    <!-- Import section: shown only when creating (not editing) -->
+    <div id="importSection">
+      <div class="modal-divider">or import from JSON</div>
+      <div class="drop-zone" id="dropZone">
+        <span class="drop-zone-icon">⬇</span>
+        <div class="drop-zone-text">Drop a JSON file here</div>
+        <div class="drop-zone-hint">or click to browse</div>
+      </div>
+      <input type="file" id="importFileModal" accept=".json,application/json" hidden>
+    </div>
+
+    <div class="form-actions">
+      <button class="btn btn-secondary" onclick="closeCollectionModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveCollection()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============== Cards Modal ============== -->
+<div id="cardsModal" class="modal-overlay" onclick="if(event.target===this)closeCardsModal()">
+  <div class="modal modal-large">
+    <div class="modal-header">
+      <h2 class="modal-title" id="cardsModalTitle">Manage Flashcards</h2>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button class="btn btn-secondary" onclick="exportCollection()" title="Download this collection as JSON">↓ Export</button>
+        <button class="modal-close" onclick="closeCardsModal()">×</button>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="cards" onclick="switchTab('cards')">Cards</button>
+      <button class="tab" data-tab="add" onclick="switchTab('add')">Add / Edit</button>
+      <button class="tab" data-tab="copy" onclick="switchTab('copy')">Copy from others</button>
+    </div>
+
+    <div id="tab-cards" class="tab-content">
+      <div id="cardsList" class="flashcard-list"></div>
+    </div>
+
+    <div id="tab-add" class="tab-content" style="display:none;">
+      <div class="form-group">
+        <label class="form-label">Front (Question)</label>
+        <textarea id="cardFront" class="form-textarea" placeholder="What's on the front of the card?&#10;&#10;Tip: Press Enter for new lines. Lists and paragraphs are preserved."></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Back (Answer)</label>
+        <textarea id="cardBack" class="form-textarea" placeholder="What's on the back?&#10;&#10;1. First point&#10;2. Second point&#10;3. ..."></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Category (optional)</label>
+        <input type="text" id="cardCategory" class="form-input" placeholder="e.g. Greetings" maxlength="40">
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-secondary" onclick="resetCardForm()">Clear</button>
+        <button class="btn btn-primary" id="saveCardBtn" onclick="saveCard()">Add Card</button>
+      </div>
+    </div>
+
+    <div id="tab-copy" class="tab-content" style="display:none;">
+      <p class="section-subtitle" style="margin-bottom:16px;">Pick cards from other collections to copy into this one.</p>
+      <div id="copyList" class="flashcard-list"></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+/* ============================================================
+   FlashDash — Index page logic
+   ============================================================
+   Sections:
+     [1] Data layer (localStorage)
+     [2] Utilities (escape, preview, highlight)
+     [3] State
+     [4] Render: collections grid
+     [5] Collection CRUD
+     [6] Card management (modal)
+     [7] Copy-from-other-collections
+     [8] Global search
+     [9] Export / Import
+     [10] Keyboard shortcuts + init
+   ============================================================ */
+
+
+/* ============================================================
+   [1] Data layer
+   ============================================================ */
+const STORAGE_KEY = 'flashdash-data';
+
+async function loadData() {
+  const cached = localStorage.getItem(STORAGE_KEY);
+  if (cached) {
+    try { return JSON.parse(cached); } catch {/* fall through */}
+  }
+  try {
+    const res = await fetch('data.json');
+    if (!res.ok) throw new Error('no data.json');
+    const data = await res.json();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    return data;
+  } catch {
+    const empty = { collections: [] };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(empty));
+    return empty;
+  }
+}
+
+function saveData(d) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
+}
+
+function uid(prefix) {
+  return (prefix || 'id') + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+}
+
+
+/* ============================================================
+   [2] Utilities
+   ============================================================ */
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, m => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[m]));
+}
+
+/* Collapse whitespace (including newlines) into single spaces for previews
+   shown in lists where multi-line text would be visually noisy. */
+function previewText(text, maxLen = 140) {
+  const cleaned = String(text || '').replace(/\s+/g, ' ').trim();
+  return cleaned.length > maxLen ? cleaned.slice(0, maxLen) + '…' : cleaned;
+}
+
+/* Return HTML-safe text with all occurrences of `query` wrapped in <mark>.
+   Case-insensitive. Regex special chars in the query are escaped so users
+   can search for things like "C++" or "(test)" without surprises. */
+function highlightMatch(text, query) {
+  const safe = String(text || '');
+  if (!query) return escapeHtml(safe);
+  const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(${escapedQuery})`, 'gi');
+  // split() with a capturing group gives us [non-match, match, non-match, match, ...]
+  return safe.split(re).map((part, i) =>
+    i % 2 === 1 ? `<mark>${escapeHtml(part)}</mark>` : escapeHtml(part)
+  ).join('');
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+
+/* ============================================================
+   [3] State
+   ============================================================ */
+let appData = { collections: [] };
+let editingCollectionId = null;
+let activeCardsCollectionId = null;
+let editingCardId = null;
+let pendingHighlightCardId = null; // set when arriving from a search result
+
+/* Auto-backup tracking — see backupAllData() in section [9].
+   • _lastAutoBackupTs throttles silent backups to one per cooldown window
+     so a rapid burst of edits doesn't trigger a stack of downloads.
+   • _autoBackupToastShown ensures the reassurance toast appears at most
+     once per page session — the user is told the feature exists, then
+     it stays out of the way. */
+let _lastAutoBackupTs = 0;
+let _autoBackupToastShown = false;
+const AUTO_BACKUP_COOLDOWN_MS = 8000;
+
+
+/* ============================================================
+   [4] Render: collections grid
+   ============================================================ */
+function renderCollections() {
+  const grid = document.getElementById('collectionsGrid');
+  const empty = document.getElementById('emptyState');
+
+  if (!appData.collections.length) {
+    grid.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  grid.innerHTML = appData.collections.map(c => {
+    const last = c.history && c.history.length ? c.history[c.history.length - 1] : null;
+    return `
+      <div class="collection-card">
+        <h3>${escapeHtml(c.title)}</h3>
+        <p>${escapeHtml(c.description || 'No description')}</p>
+        <div class="collection-meta">
+          <span><span class="meta-dot"></span>${c.flashcards.length} cards</span>
+          ${last
+            ? `<span><span class="meta-dot"></span>Last: ${last.score}%</span>`
+            : `<span style="opacity:.6"><span class="meta-dot" style="background:var(--text-subtle)"></span>No history</span>`}
+        </div>
+        <div class="collection-actions">
+          <a class="btn btn-primary" href="revise.html?id=${encodeURIComponent(c.id)}">Revise</a>
+          <a class="btn btn-secondary" href="quiz.html?id=${encodeURIComponent(c.id)}">Quiz</a>
+          <button class="btn btn-secondary btn-icon" title="Manage cards" onclick="openCardsModal('${c.id}')">⊞</button>
+          <button class="btn btn-secondary btn-icon" title="Edit" onclick="openCollectionModal('${c.id}')">✎</button>
+          <button class="btn btn-danger btn-icon" title="Delete" onclick="deleteCollection('${c.id}')">×</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+
+/* ============================================================
+   [5] Collection CRUD
+   ============================================================ */
+function openCollectionModal(id) {
+  editingCollectionId = id || null;
+  const titleInput = document.getElementById('collectionTitle');
+  const descInput = document.getElementById('collectionDescription');
+  const importSection = document.getElementById('importSection');
+
+  if (id) {
+    const c = appData.collections.find(x => x.id === id);
+    document.getElementById('collectionModalTitle').textContent = 'Edit Collection';
+    titleInput.value = c.title;
+    descInput.value = c.description || '';
+    importSection.style.display = 'none';     // import only makes sense when creating
+  } else {
+    document.getElementById('collectionModalTitle').textContent = 'New Collection';
+    titleInput.value = '';
+    descInput.value = '';
+    importSection.style.display = 'block';
+  }
+  document.getElementById('collectionModal').classList.add('active');
+  setTimeout(() => titleInput.focus(), 50);
+}
+
+function closeCollectionModal() {
+  document.getElementById('collectionModal').classList.remove('active');
+  editingCollectionId = null;
+}
+
+function saveCollection() {
+  const title = document.getElementById('collectionTitle').value.trim();
+  const description = document.getElementById('collectionDescription').value.trim();
+  if (!title) { showToast('Title is required'); return; }
+
+  if (editingCollectionId) {
+    const c = appData.collections.find(x => x.id === editingCollectionId);
+    c.title = title;
+    c.description = description;
+    showToast('Collection updated');
+  } else {
+    appData.collections.push({
+      id: uid('col'), title, description,
+      flashcards: [], history: []
+    });
+    showToast('Collection created');
+  }
+  saveData(appData);
+  renderCollections();
+  closeCollectionModal();
+  backupAllData(true);   // auto-backup after create/edit
+}
+
+function deleteCollection(id) {
+  const c = appData.collections.find(x => x.id === id);
+  if (!c) return;
+  if (!confirm(`Delete "${c.title}" and all its cards? This cannot be undone.`)) return;
+  appData.collections = appData.collections.filter(x => x.id !== id);
+  saveData(appData);
+  renderCollections();
+  refreshSearchIfActive();
+  showToast('Collection deleted');
+}
+
+
+/* ============================================================
+   [6] Card management modal
+   ============================================================ */
+function openCardsModal(collectionId) {
+  activeCardsCollectionId = collectionId;
+  const c = appData.collections.find(x => x.id === collectionId);
+  document.getElementById('cardsModalTitle').textContent = c.title;
+  switchTab('cards');
+  renderCardsList();
+  renderCopyList();
+  document.getElementById('cardsModal').classList.add('active');
+
+  // If we arrived via a search result, scroll to + highlight that card
+  if (pendingHighlightCardId) {
+    requestAnimationFrame(() => highlightCardInList(pendingHighlightCardId));
+  }
+}
+
+function closeCardsModal() {
+  document.getElementById('cardsModal').classList.remove('active');
+  activeCardsCollectionId = null;
+  editingCardId = null;
+  pendingHighlightCardId = null;
+  resetCardForm();
+  renderCollections();
+  refreshSearchIfActive();
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+  document.getElementById('tab-' + name).style.display = 'block';
+}
+
+function renderCardsList() {
+  const c = appData.collections.find(x => x.id === activeCardsCollectionId);
+  const list = document.getElementById('cardsList');
+  if (!c.flashcards.length) {
+    list.innerHTML = '<div class="empty-state-mini">No cards yet — switch to "Add / Edit" to create one.</div>';
+    return;
+  }
+  // previewText collapses newlines so list rows stay single-line + clean
+  list.innerHTML = c.flashcards.map(card => `
+    <div class="flashcard-item" data-card-id="${escapeHtml(card.id)}">
+      <div class="flashcard-item-content">
+        <div class="flashcard-item-front">${escapeHtml(previewText(card.front, 100))}</div>
+        <div class="flashcard-item-back">${escapeHtml(previewText(card.back, 100))}${card.category ? ' · ' + escapeHtml(card.category) : ''}</div>
+      </div>
+      <div class="flashcard-item-actions">
+        <button class="btn btn-secondary btn-icon" title="Edit" onclick="editCard('${card.id}')">✎</button>
+        <button class="btn btn-danger btn-icon" title="Delete" onclick="deleteCard('${card.id}')">×</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function highlightCardInList(cardId) {
+  const list = document.getElementById('cardsList');
+  const target = list.querySelector(`.flashcard-item[data-card-id="${CSS.escape(cardId)}"]`);
+  if (!target) { pendingHighlightCardId = null; return; }
+  target.classList.add('highlighted');
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setTimeout(() => target.classList.remove('highlighted'), 1800);
+  pendingHighlightCardId = null;
+}
+
+function editCard(cardId) {
+  const c = appData.collections.find(x => x.id === activeCardsCollectionId);
+  const card = c.flashcards.find(f => f.id === cardId);
+  editingCardId = cardId;
+  // textarea.value preserves \n natively — no transformation needed
+  document.getElementById('cardFront').value = card.front;
+  document.getElementById('cardBack').value = card.back;
+  document.getElementById('cardCategory').value = card.category || '';
+  document.getElementById('saveCardBtn').textContent = 'Update Card';
+  switchTab('add');
+}
+
+function resetCardForm() {
+  document.getElementById('cardFront').value = '';
+  document.getElementById('cardBack').value = '';
+  document.getElementById('cardCategory').value = '';
+  document.getElementById('saveCardBtn').textContent = 'Add Card';
+  editingCardId = null;
+}
+
+function saveCard() {
+  /* IMPORTANT: do NOT .trim() in a way that collapses internal whitespace.
+     We only strip leading/trailing whitespace — internal newlines (which
+     give us bullets, lists, paragraph breaks) are preserved verbatim. */
+  const front = document.getElementById('cardFront').value.replace(/^[\s\n]+|[\s\n]+$/g, '');
+  const back  = document.getElementById('cardBack').value.replace(/^[\s\n]+|[\s\n]+$/g, '');
+  const category = document.getElementById('cardCategory').value.trim();
+  if (!front || !back) { showToast('Front and back are required'); return; }
+
+  const c = appData.collections.find(x => x.id === activeCardsCollectionId);
+  if (editingCardId) {
+    const card = c.flashcards.find(f => f.id === editingCardId);
+    card.front = front;
+    card.back = back;
+    card.category = category;
+    showToast('Card updated');
+  } else {
+    c.flashcards.push({ id: uid('card'), front, back, category });
+    showToast('Card added');
+  }
+  saveData(appData);
+  resetCardForm();
+  renderCardsList();
+  switchTab('cards');
+  backupAllData(true);   // auto-backup after add/edit
+}
+
+function deleteCard(cardId) {
+  if (!confirm('Delete this card?')) return;
+  const c = appData.collections.find(x => x.id === activeCardsCollectionId);
+  c.flashcards = c.flashcards.filter(f => f.id !== cardId);
+  saveData(appData);
+  renderCardsList();
+  showToast('Card deleted');
+}
+
+
+/* ============================================================
+   [7] Copy from other collections
+   ============================================================ */
+function renderCopyList() {
+  const list = document.getElementById('copyList');
+  const others = appData.collections.filter(c => c.id !== activeCardsCollectionId);
+  const allCards = others.flatMap(c => c.flashcards.map(f => ({ ...f, _from: c.title })));
+
+  if (!allCards.length) {
+    list.innerHTML = '<div class="empty-state-mini">No other collections to copy from yet.</div>';
+    return;
+  }
+  list.innerHTML = allCards.map(card => `
+    <div class="flashcard-item">
+      <div class="flashcard-item-content">
+        <div class="flashcard-item-front">${escapeHtml(previewText(card.front, 100))}</div>
+        <div class="flashcard-item-back">${escapeHtml(previewText(card.back, 100))} · from ${escapeHtml(card._from)}</div>
+      </div>
+      <div class="flashcard-item-actions">
+        <button class="btn btn-primary" onclick="copyCard('${card.id}')">Copy</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function copyCard(cardId) {
+  let source = null;
+  for (const c of appData.collections) {
+    const f = c.flashcards.find(x => x.id === cardId);
+    if (f) { source = f; break; }
+  }
+  if (!source) return;
+  const target = appData.collections.find(c => c.id === activeCardsCollectionId);
+  target.flashcards.push({
+    id: uid('card'),
+    front: source.front,    // verbatim — keeps newlines/lists intact
+    back: source.back,
+    category: source.category || ''
+  });
+  saveData(appData);
+  renderCardsList();
+  showToast('Card copied');
+}
+
+
+/* ============================================================
+   [8] Global search
+   ============================================================
+   Strategy: rebuild a flat scan of all cards on each query (debounced).
+   For typical sizes this is O(n) per keystroke and feels instant; no
+   index maintenance needed. Cap displayed results at 50 to keep DOM small. */
+const MAX_VISIBLE_RESULTS = 50;
+let _searchTimer = null;
+
+function setupSearch() {
+  const input = document.getElementById('searchInput');
+  input.addEventListener('input', () => {
+    clearTimeout(_searchTimer);
+    _searchTimer = setTimeout(performSearch, 120);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') clearSearch();
+  });
+}
+
+function performSearch() {
+  const raw = document.getElementById('searchInput').value;
+  const query = raw.trim().toLowerCase();
+  const clearBtn = document.getElementById('searchClear');
+  const resultsEl = document.getElementById('searchResults');
+  const collectionsSection = document.getElementById('collectionsSection');
+
+  clearBtn.style.display = raw ? 'block' : 'none';
+
+  if (!query) {
+    resultsEl.style.display = 'none';
+    resultsEl.innerHTML = '';
+    collectionsSection.classList.remove('hidden');
+    return;
+  }
+
+  // Linear scan across all cards. Match against front, back, or category.
+  const matches = [];
+  for (const c of appData.collections) {
+    for (const card of c.flashcards) {
+      const hay = (card.front + '\n' + card.back + '\n' + (card.category || '')).toLowerCase();
+      if (hay.includes(query)) {
+        matches.push({
+          collectionId: c.id,
+          collectionTitle: c.title,
+          card
+        });
+      }
+    }
+  }
+
+  collectionsSection.classList.add('hidden');
+  renderSearchResults(matches, query);
+}
+
+function renderSearchResults(matches, query) {
+  const resultsEl = document.getElementById('searchResults');
+  resultsEl.style.display = 'flex';
+
+  if (!matches.length) {
+    resultsEl.innerHTML = `
+      <div class="search-results-empty">
+        <strong>No matches</strong>
+        Try a different word, or check your spelling.
+      </div>`;
+    return;
+  }
+
+  const visible = matches.slice(0, MAX_VISIBLE_RESULTS);
+  const truncated = matches.length > MAX_VISIBLE_RESULTS;
+
+  const itemsHtml = visible.map(m => {
+    // previewText collapses newlines for tidy result rows; highlightMatch
+    // then wraps query occurrences in <mark>. Both steps escape HTML.
+    const frontHtml = highlightMatch(previewText(m.card.front, 160), query);
+    const backHtml  = highlightMatch(previewText(m.card.back, 160), query);
+    const collHtml  = highlightMatch(m.collectionTitle, query);
+    return `
+      <div class="search-result-item"
+           onclick="openFromSearch('${m.collectionId}', '${m.card.id}')">
+        <div class="search-result-collection">${collHtml}</div>
+        <div class="search-result-front">${frontHtml}</div>
+        <div class="search-result-back">${backHtml}</div>
+      </div>
+    `;
+  }).join('');
+
+  resultsEl.innerHTML = `
+    <div class="search-results-header">
+      <span><strong>${matches.length}</strong> ${matches.length === 1 ? 'card' : 'cards'} found</span>
+      ${truncated ? `<span>Showing first ${MAX_VISIBLE_RESULTS}</span>` : ''}
+    </div>
+    <div class="search-results-list">${itemsHtml}</div>
+  `;
+}
+
+function clearSearch() {
+  const input = document.getElementById('searchInput');
+  input.value = '';
+  document.getElementById('searchClear').style.display = 'none';
+  document.getElementById('searchResults').style.display = 'none';
+  document.getElementById('searchResults').innerHTML = '';
+  document.getElementById('collectionsSection').classList.remove('hidden');
+  input.focus();
+}
+
+/* Called after CRUD operations to keep results in sync if a search is active */
+function refreshSearchIfActive() {
+  if (document.getElementById('searchInput').value.trim()) performSearch();
+}
+
+/* When user clicks a search result, open the parent collection's modal
+   and pass the card id so it gets highlighted + scrolled into view. */
+function openFromSearch(collectionId, cardId) {
+  pendingHighlightCardId = cardId;
+  openCardsModal(collectionId);
+}
+
+
+/* ============================================================
+   [9] Export / Import / Backup
+   ============================================================ */
+
+/* --- Full backup ----------------------------------------------------
+   Downloads every collection in a single JSON file. Two modes:
+
+     • Manual (silent=false) — user clicked the header Backup button.
+       Always runs (no cooldown) and shows an informative toast with
+       counts so the user gets clear confirmation.
+
+     • Auto   (silent=true)  — fired after a meaningful change (create
+       collection, save card, import). Throttled to at most one download
+       per AUTO_BACKUP_COOLDOWN_MS so rapid edits don't spawn a download
+       per keystroke, and the reassurance toast shows only ONCE per
+       session so it never becomes noise.
+
+   In both modes we no-op when there's nothing to back up. */
+function backupAllData(silent = false) {
+  // Guard: nothing meaningful to save
+  if (!appData.collections.length) {
+    if (!silent) showToast('Nothing to back up yet');
+    return;
+  }
+
+  // Cooldown applies only to automatic backups; manual is always allowed
+  if (silent) {
+    const now = Date.now();
+    if (now - _lastAutoBackupTs < AUTO_BACKUP_COOLDOWN_MS) return;
+    _lastAutoBackupTs = now;
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const payload = {
+    version: 1,
+    type: 'flashdash-backup',
+    exportedAt: new Date().toISOString(),
+    collections: appData.collections
+  };
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  // Distinct filename prefix so users can tell auto from manual at a glance
+  a.download = silent
+    ? `flashdash-auto-backup-${today}.json`
+    : `flashdash-backup-${today}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  if (silent) {
+    // Once-per-session reassurance — user shouldn't see this on every save
+    if (!_autoBackupToastShown) {
+      _autoBackupToastShown = true;
+      showToast('💾 Auto-backup created for safety');
+    }
+  } else {
+    const totalCards = appData.collections.reduce((s, c) => s + c.flashcards.length, 0);
+    showToast(`💾 Backup downloaded — ${appData.collections.length} ${appData.collections.length === 1 ? 'collection' : 'collections'}, ${totalCards} cards`);
+  }
+}
+
+/* --- Export ----------------------------------------------------------
+   Wraps the collection in an envelope ({version, type, collection}) so
+   importers can sanity-check the file is a FlashDash collection.
+   Also accepts un-wrapped or full-data-file imports for flexibility. */
+function exportCollection() {
+  const c = appData.collections.find(x => x.id === activeCardsCollectionId);
+  if (!c) return;
+
+  const payload = {
+    version: 1,
+    type: 'flashdash-collection',
+    exportedAt: new Date().toISOString(),
+    collection: c
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = sanitizeFilename(c.title) + '.flashdash.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast(`Exported "${c.title}"`);
+}
+
+function sanitizeFilename(s) {
+  return String(s)
+    .replace(/[^a-z0-9\-_]+/gi, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 60) || 'collection';
+}
+
+/* --- Import ----------------------------------------------------------
+   Accepts three input shapes:
+     1) {type:'flashdash-collection', collection:{...}}   (our export)
+     2) {title, flashcards:[...]}                          (raw collection)
+     3) {collections:[...]}                                (a full data file
+                                                            — we take all of them)
+   All imported records get fresh IDs to avoid colliding with existing ones. */
+function handleImportFile(file) {
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) { // 5 MB sanity limit
+    showToast('File too large');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const parsed = JSON.parse(e.target.result);
+      const collections = extractCollections(parsed);
+      if (!collections.length) {
+        showToast('No valid collection found in file');
+        return;
+      }
+      const totalCards = collections.reduce((sum, c) => sum + c.flashcards.length, 0);
+      for (const col of collections) appData.collections.push(col);
+      saveData(appData);
+      renderCollections();
+      refreshSearchIfActive();
+      closeCollectionModal();
+      showToast(
+        collections.length === 1
+          ? `Imported "${collections[0].title}" (${totalCards} cards)`
+          : `Imported ${collections.length} collections (${totalCards} cards)`
+      );
+      backupAllData(true);   // auto-backup after successful import
+    } catch (err) {
+      showToast('Error: invalid JSON file');
+      console.error(err);
+    }
+  };
+  reader.onerror = () => showToast('Could not read file');
+  reader.readAsText(file);
+}
+
+function extractCollections(parsed) {
+  /* Normalize whatever shape we got into an array of well-formed collections
+     with fresh IDs. Returns [] if nothing valid is found. */
+  const candidates = [];
+  if (parsed && parsed.collection && typeof parsed.collection.title === 'string') {
+    candidates.push(parsed.collection);
+  } else if (parsed && typeof parsed.title === 'string' && Array.isArray(parsed.flashcards)) {
+    candidates.push(parsed);
+  } else if (parsed && Array.isArray(parsed.collections)) {
+    for (const c of parsed.collections) {
+      if (c && typeof c.title === 'string') candidates.push(c);
+    }
+  }
+
+  return candidates.map(c => ({
+    id: uid('col'),
+    title: String(c.title).slice(0, 80),
+    description: String(c.description || '').slice(0, 240),
+    flashcards: Array.isArray(c.flashcards) ? c.flashcards
+      .filter(card => card && typeof card.front === 'string' && typeof card.back === 'string')
+      .map(card => ({
+        id: uid('card'),
+        front: card.front,
+        back: card.back,
+        category: typeof card.category === 'string' ? card.category : ''
+      }))
+      : [],
+    history: Array.isArray(c.history) ? c.history : []
+  }));
+}
+
+function setupImport() {
+  /* Header import button → hidden file input */
+  document.getElementById('importFileHeader').addEventListener('change', (e) => {
+    if (e.target.files[0]) handleImportFile(e.target.files[0]);
+    e.target.value = ''; // reset so re-importing same file fires change again
+  });
+
+  /* Drop zone + click in the New Collection modal */
+  const dropZone = document.getElementById('dropZone');
+  const fileInputModal = document.getElementById('importFileModal');
+
+  dropZone.addEventListener('click', () => fileInputModal.click());
+  fileInputModal.addEventListener('change', (e) => {
+    if (e.target.files[0]) handleImportFile(e.target.files[0]);
+    e.target.value = '';
+  });
+
+  /* Drag & drop. Note: dragover MUST preventDefault, otherwise drop never fires. */
+  ['dragenter', 'dragover'].forEach(ev => {
+    dropZone.addEventListener(ev, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropZone.classList.add('dragover');
+    });
+  });
+  ['dragleave', 'drop'].forEach(ev => {
+    dropZone.addEventListener(ev, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropZone.classList.remove('dragover');
+    });
+  });
+  dropZone.addEventListener('drop', (e) => {
+    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) handleImportFile(file);
+  });
+
+  /* Prevent the browser from navigating away when a file is dropped
+     outside the drop zone (default behaviour opens the file). */
+  window.addEventListener('dragover', (e) => e.preventDefault());
+  window.addEventListener('drop', (e) => {
+    // Only block default if it wasn't already handled by the drop zone
+    if (!e.defaultPrevented) e.preventDefault();
+  });
+}
+
+
+/* ============================================================
+   [10] Keyboard shortcuts + init
+   ============================================================ */
+document.addEventListener('keydown', (e) => {
+  // Esc closes whatever modal is open
+  if (e.key === 'Escape') {
+    if (document.getElementById('collectionModal').classList.contains('active')) closeCollectionModal();
+    if (document.getElementById('cardsModal').classList.contains('active')) closeCardsModal();
+  }
+  // Slash focuses the search bar (unless the user is already typing in a field)
+  if (e.key === '/' &&
+      !['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) {
+    e.preventDefault();
+    document.getElementById('searchInput').focus();
+  }
+});
+
+(async function init() {
+  appData = await loadData();
+  renderCollections();
+  setupSearch();
+  setupImport();
+})();
+</script>
+</body>
+</html>

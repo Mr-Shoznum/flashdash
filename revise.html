@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlashDash — Revise</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="header">
+  <a href="index.html" class="logo">Flash<span class="accent">Dash</span></a>
+  <div class="nav-actions">
+    <a class="btn btn-secondary" href="index.html">← Back to Collections</a>
+  </div>
+</header>
+
+<main class="container">
+  <div id="reviseRoot"></div>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script>
+/* ============================================
+   FlashDash — Revise
+   ============================================ */
+const STORAGE_KEY = 'flashdash-data';
+
+function getData() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{"collections":[]}');
+  } catch {
+    return { collections: [] };
+  }
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, m => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[m]));
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+/* ---------- State ---------- */
+const params = new URLSearchParams(location.search);
+const collectionId = params.get('id');
+const data = getData();
+const collection = data.collections.find(c => c.id === collectionId);
+
+let cards = [];
+let currentIndex = 0;
+let isFlipped = false;
+
+/* ---------- Init ---------- */
+function init() {
+  const root = document.getElementById('reviseRoot');
+
+  if (!collection) {
+    root.innerHTML = `
+      <div class="empty-state">
+        <h3>Collection not found</h3>
+        <p>It may have been deleted.</p>
+        <a class="btn btn-primary" href="index.html">Back to home</a>
+      </div>`;
+    return;
+  }
+
+  if (!collection.flashcards.length) {
+    root.innerHTML = `
+      <h1 class="page-title">${escapeHtml(collection.title)}</h1>
+      <p class="section-subtitle">${escapeHtml(collection.description || '')}</p>
+      <div class="empty-state">
+        <h3>No cards in this collection</h3>
+        <p>Add some cards before revising.</p>
+        <a class="btn btn-primary" href="index.html">Back to home</a>
+      </div>`;
+    return;
+  }
+
+  cards = [...collection.flashcards];
+  render();
+}
+
+function render() {
+  const root = document.getElementById('reviseRoot');
+  const card = cards[currentIndex];
+  const progress = ((currentIndex + 1) / cards.length) * 100;
+
+  root.innerHTML = `
+    <h1 class="page-title">${escapeHtml(collection.title)}</h1>
+    <p class="section-subtitle">Click the card to reveal the answer. Use arrows or keyboard to navigate.</p>
+
+    <div class="viewer">
+      <div class="progress-bar">
+        <div class="progress-fill" style="width:${progress}%"></div>
+      </div>
+
+      <div class="flashcard ${isFlipped ? 'flipped' : ''}" id="flashcard" onclick="flip()">
+        <div class="flashcard-inner">
+          <div class="flashcard-front">
+            <div class="flashcard-label">Front · Question</div>
+            ${card.category ? `<div class="flashcard-category">${escapeHtml(card.category)}</div>` : ''}
+            <div class="flashcard-content-wrap">
+              <div class="flashcard-content" data-fit>${escapeHtml(card.front)}</div>
+            </div>
+          </div>
+          <div class="flashcard-back">
+            <div class="flashcard-label">Back · Answer</div>
+            ${card.category ? `<div class="flashcard-category">${escapeHtml(card.category)}</div>` : ''}
+            <div class="flashcard-content-wrap">
+              <div class="flashcard-content" data-fit>${escapeHtml(card.back)}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="viewer-controls">
+        <button class="btn btn-secondary" onclick="prev()" ${currentIndex === 0 ? 'disabled' : ''}>← Prev</button>
+        <div class="progress-text">${currentIndex + 1} / ${cards.length}</div>
+        <button class="btn btn-secondary" onclick="next()" ${currentIndex === cards.length - 1 ? 'disabled' : ''}>Next →</button>
+      </div>
+
+      <div class="viewer-controls">
+        <button class="btn btn-primary" onclick="flip()">Flip Card</button>
+        <button class="btn btn-secondary" onclick="shuffle()">Shuffle</button>
+        <button class="btn btn-secondary" onclick="restart()">Restart</button>
+        <a class="btn btn-secondary" href="quiz.html?id=${encodeURIComponent(collection.id)}">Take Quiz →</a>
+      </div>
+
+      <p class="hint">SPACE flip · ← → navigate · S shuffle</p>
+    </div>
+  `;
+
+  // After the DOM is painted, auto-fit text on BOTH faces (front is visible,
+  // back is rotated but still in layout — measurements work on both).
+  requestAnimationFrame(fitAllText);
+}
+
+/* ---------- Auto-fit text ----------
+   CSS clamp() sets the maximum font-size. This function binary-searches
+   downward from that max to find the largest size where the content fits
+   inside its wrapper without overflow. Floor is 14px for readability.
+   If even 14px overflows (extreme edge case), the .flashcard-content
+   `overflow-y: auto` rule kicks in and the user can scroll inside the card. */
+function fitText(el) {
+  if (!el) return;
+  const wrap = el.parentElement;
+  if (!wrap || wrap.clientHeight === 0 || wrap.clientWidth === 0) return;
+
+  // Reset to the CSS-defined maximum, then read it back
+  el.style.fontSize = '';
+  const maxSize = Math.round(parseFloat(getComputedStyle(el).fontSize)) || 30;
+  const minSize = 14;
+
+  // Fast path: already fits
+  if (el.scrollHeight <= wrap.clientHeight && el.scrollWidth <= wrap.clientWidth) {
+    return;
+  }
+
+  // Binary search for the largest size that fits
+  let lo = minSize, hi = maxSize, best = minSize;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    el.style.fontSize = mid + 'px';
+    if (el.scrollHeight <= wrap.clientHeight && el.scrollWidth <= wrap.clientWidth) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  el.style.fontSize = best + 'px';
+}
+
+function fitAllText() {
+  document.querySelectorAll('.flashcard-content[data-fit]').forEach(fitText);
+}
+
+/* Re-fit on resize (debounced) so the text stays optimal across viewport changes */
+let _fitTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(_fitTimer);
+  _fitTimer = setTimeout(fitAllText, 120);
+});
+
+function flip() {
+  isFlipped = !isFlipped;
+  const el = document.getElementById('flashcard');
+  if (el) el.classList.toggle('flipped', isFlipped);
+}
+
+function next() {
+  if (currentIndex < cards.length - 1) {
+    currentIndex++;
+    isFlipped = false;
+    render();
+  }
+}
+
+function prev() {
+  if (currentIndex > 0) {
+    currentIndex--;
+    isFlipped = false;
+    render();
+  }
+}
+
+function shuffle() {
+  for (let i = cards.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [cards[i], cards[j]] = [cards[j], cards[i]];
+  }
+  currentIndex = 0;
+  isFlipped = false;
+  render();
+  showToast('Shuffled');
+}
+
+function restart() {
+  cards = [...collection.flashcards];
+  currentIndex = 0;
+  isFlipped = false;
+  render();
+  showToast('Restarted');
+}
+
+document.addEventListener('keydown', (e) => {
+  if (!cards.length) return;
+  if (e.code === 'Space') { e.preventDefault(); flip(); }
+  else if (e.code === 'ArrowRight') next();
+  else if (e.code === 'ArrowLeft') prev();
+  else if (e.key === 's' || e.key === 'S') shuffle();
+});
+
+init();
+</script>
+</body>
+</html>
